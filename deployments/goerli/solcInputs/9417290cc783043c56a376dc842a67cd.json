@@ -1,0 +1,41 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol": {
+      "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\ninterface AggregatorV3Interface {\n  function decimals() external view returns (uint8);\n\n  function description() external view returns (string memory);\n\n  function version() external view returns (uint256);\n\n  function getRoundData(uint80 _roundId)\n    external\n    view\n    returns (\n      uint80 roundId,\n      int256 answer,\n      uint256 startedAt,\n      uint256 updatedAt,\n      uint80 answeredInRound\n    );\n\n  function latestRoundData()\n    external\n    view\n    returns (\n      uint80 roundId,\n      int256 answer,\n      uint256 startedAt,\n      uint256 updatedAt,\n      uint80 answeredInRound\n    );\n}\n"
+    },
+    "contracts/FundMe.sol": {
+      "content": "//Get funds from users\n// Withdraw funds\n// Set a minimum funding value in USD -> we will need to use an Oracle\n\n// SPDX-License-Identifier: MIT\n\npragma solidity ^0.8.8;\n\nimport \"./PriceConverter.sol\";\n\nerror NotOwner();\n\ncontract FundMe {\n    using PriceConverter for uint256; // To use the library\n\n    uint256 public constant MINIMUM_USD = 50 * 1e18; // To have the 18 decimals\n\n    // To keep who is sending money and how much\n    address[] public funders;\n    mapping(address => uint256) public addressToamountFunded;\n\n    address public immutable i_owner;\n\n    AggregatorV3Interface public priceFeed;\n\n    constructor(address priceFeedAddress) {\n        i_owner = msg.sender; // Who ever deployed this contract\n        priceFeed = AggregatorV3Interface(priceFeedAddress);\n    }\n\n    function fund() public payable {\n        // We want to be able to set a minimum fund amount in USD\n        // 1. How do we send ETH to this contract ?\n\n        // We accept only if the value sent is more than 1ETH\n        // if the condition is not met, it will revert\n        // Revert undo any action before, and send remaining gas back. The only gas used is for the code executed before the \"require\" statement\n        // require(msg.value > 1e18, \"Didn't send enough!\"); // 1e18 = 1ETH\n        // msg.value will be 18 decimals\n        //require(getConversionRate(msg.value) >= minimumUsd, \"Didn't send enough!\");\n        require(\n            msg.value.getConversionRate(priceFeed) >= MINIMUM_USD,\n            \"Didn't send enough!\"\n        ); // We don't need to pass the first parameter as it's implicitly msg.value\n        funders.push(msg.sender);\n        addressToamountFunded[msg.sender] = msg.value;\n    }\n\n    function withdraw() public onlyOwner {\n        /* starting index; ending index; step amount */\n        for (\n            uint256 funderIndex = 0;\n            funderIndex < funders.length;\n            funderIndex++\n        ) {\n            address funder = funders[funderIndex];\n            addressToamountFunded[funder] = 0;\n        }\n\n        // Reset the array\n        funders = new address[](0);\n        // Actually withdraw the funds\n\n        // There are 3 ways of sending ETh  -> https://solidity-by-example.org/sending-ether/\n        // 1 - TRANSFER\n        // msg.sender = address\n        // paybale(msg.sender) = payable address\n        payable(msg.sender).transfer(address(this).balance); // if it fails, will return an error and revert the transaction\n\n        // 2 - SEND\n        bool sendSuccess = payable(msg.sender).send(address(this).balance);\n        require(sendSuccess, \"Send failed\");\n\n        // 3 - CALL  -> extremlly powerful\n        (bool callSuccess /*bytes memory dataReturned*/, ) = payable(msg.sender)\n            .call{value: address(this).balance}(\"\");\n        require(callSuccess, \"Call failed\");\n    }\n\n    modifier onlyOwner() {\n        // So that only the contract's owner can call this function\n        // require(msg.sender == owner, \"Sender is not owner!\"); -> The solution just below is more gas efficient\n        if (msg.sender != i_owner) {\n            revert NotOwner();\n        }\n        _; // represents \"Do the rest of the code\"\n    }\n\n    // What happens if someone sends this contract ETH without calling the fund function ?\n    // received() -> this special function is called when someone is doing a transaction on our contract without calldata\n    // fallback() -> this special function is called when someone is doing a transaction on our contract wwith some calldata but it doesn't match a function\n\n    // ETH is sent to a contract\n    //          is msg.data empty ?\n    //              /   \\\n    //            yes   no\n    //            /       \\\n    //        receive()?   fallback()\n    //         /     \\\n    //        yes    no\n    //        /         \\\n    //    receive()     fallback()\n    receive() external payable {\n        fund();\n    }\n\n    fallback() external payable {\n        fund();\n    }\n}\n"
+    },
+    "contracts/PriceConverter.sol": {
+      "content": "// SPDX-License-Identifier: MIT\n\npragma solidity ^0.8.0;\n\nimport \"@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol\";\n\nlibrary PriceConverter {\n    // We need the price of the native token. To do so, we will use Chainlink.\n    function getPrice(\n        AggregatorV3Interface priceFeed\n    ) internal view returns (uint256) {\n        // We need: -> ABI\n        // We will use the Interface of the contract. We will import it from Github\n\n        // We need: -> Address of the contract -> we can get it from the chainlink website -> https://docs.chain.link/data-feeds/price-feeds/addresses\n        // 0xD4a33860578De61DBAbDc8BFdb98FD742fA7028e\n\n        (, int256 price, , , ) = priceFeed.latestRoundData(); // Will get the ETH price in terms of USD with 8 decimals\n\n        return uint256(price * 1e10); // To match with msg.value decimals and variable type\n    }\n\n    function getConversionRate(\n        uint256 ethAmount,\n        AggregatorV3Interface priceFeed\n    ) internal view returns (uint256) {\n        uint256 ethPrice = getPrice(priceFeed);\n        uint256 ethAmountInUsd = (ethPrice * ethAmount) / 1e18;\n\n        return ethAmountInUsd;\n    }\n}\n"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": false,
+      "runs": 200
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers",
+          "metadata",
+          "devdoc",
+          "userdoc",
+          "storageLayout",
+          "evm.gasEstimates"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    },
+    "metadata": {
+      "useLiteralContent": true
+    }
+  }
+}
