@@ -2,7 +2,7 @@ node_modules
 .env
 typechain
 typechain-types
-
+deployments
 # test coverage results
 coverage
 coverage.json
